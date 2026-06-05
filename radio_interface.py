@@ -95,15 +95,24 @@ def find_rigctld() -> str:
     found = shutil.which("rigctld")
     if found:
         return found
-    # 2. Common install locations on Windows
-    candidates = [
+
+    # 2. Build candidate list — fixed paths first, then glob versioned hamlib dirs
+    candidates: list[Path] = [
         Path("C:/hamlib/bin/rigctld.exe"),
         Path("C:/Program Files/Hamlib/bin/rigctld.exe"),
         Path("C:/Program Files (x86)/Hamlib/bin/rigctld.exe"),
         Path(os.environ.get("LOCALAPPDATA", "")) / "hamlib/bin/rigctld.exe",
-        # Same folder as this script (bundled)
         Path(__file__).parent / "rigctld.exe",
     ]
+
+    # Glob for versioned install dirs under Program Files (e.g. hamlib-w64-4.7.1)
+    for base in [Path("C:/Program Files"), Path("C:/Program Files (x86)"), Path("C:/")]:
+        try:
+            for d in sorted(base.glob("hamlib*"), reverse=True):  # newest version first
+                candidates.append(d / "bin" / "rigctld.exe")
+        except PermissionError:
+            pass
+
     for p in candidates:
         if p.exists():
             return str(p)
