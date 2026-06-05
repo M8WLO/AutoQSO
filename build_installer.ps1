@@ -11,8 +11,9 @@ $ScriptDir = $PSScriptRoot
 Write-Host "=== AutoQSO Build v$Version ===" -ForegroundColor Cyan
 
 # ── sanity checks
-if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-    Write-Error "PyInstaller not found. Run: pip install pyinstaller"
+$PyExe = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+if (-not $PyExe) {
+    Write-Error "python not found in PATH."
     exit 1
 }
 
@@ -25,7 +26,7 @@ Remove-Item -Recurse -Force "$ScriptDir\dist"   -ErrorAction SilentlyContinue
 Write-Host "Running PyInstaller..." -ForegroundColor Yellow
 Set-Location $ScriptDir
 
-pyinstaller --clean --noconfirm AutoQSO.spec
+& $PyExe -m PyInstaller --clean --noconfirm AutoQSO.spec
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller failed with exit code $LASTEXITCODE"
