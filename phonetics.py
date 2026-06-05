@@ -92,6 +92,26 @@ def callsign_to_speech(callsign: str) -> str:
     return ' '.join(parts)
 
 
+def extract_all_callsigns(text: str) -> list[str]:
+    """
+    Return every callsign found in a transcript — both direct regex matches
+    and any callsigns recoverable from phonetic words.
+    Duplicates are removed; order is preserved.
+    """
+    seen: dict[str, None] = {}
+
+    # Direct matches
+    for m in _CALLSIGN_RE.finditer(text.upper()):
+        seen[m.group(1)] = None
+
+    # Phonetic decode — may reveal additional callsigns not written out
+    decoded = _decode_phonetics(text)
+    for m in _CALLSIGN_RE.finditer(decoded):
+        seen[m.group(1)] = None
+
+    return list(seen)
+
+
 def speech_to_callsign(text: str) -> str | None:
     """
     Try to extract a callsign from Whisper-transcribed text.

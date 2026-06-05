@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         c.log_line.connect(self._on_log_line)
         c.error_signal.connect(self._on_error)
         c.ptt_changed.connect(self._on_ptt_changed)
+        c.monitor_heard.connect(self._on_monitor_heard)
         self._rx_monitor.rx_level.connect(self._on_rx_level)
 
     def _start_rx_monitor(self):
@@ -95,7 +96,8 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(6, 6, 6, 6)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_operate_tab(), "Operate")
+        tabs.addTab(self._build_operate_tab(),  "Operate")
+        tabs.addTab(self._build_monitor_tab(), "Monitor")
         tabs.addTab(self._build_radio_tab(),   "Radio / CAT")
         tabs.addTab(self._build_audio_tab(),   "Audio / STT / TTS")
         tabs.addTab(self._build_logging_tab(), "Logging")
@@ -186,6 +188,54 @@ class MainWindow(QMainWindow):
         self.qso_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.qso_table.setAlternatingRowColors(True)
         lay.addWidget(self._grp("Session Log", self.qso_table), 1)
+
+        return w
+
+    # ════════════════════════════════════════════ MONITOR TAB
+    def _build_monitor_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setSpacing(8)
+
+        # ── Controls row
+        ctrl = QHBoxLayout()
+        self.mon_start_btn = QPushButton("▶  Start Monitor")
+        self.mon_start_btn.setMinimumHeight(40)
+        self.mon_start_btn.setEnabled(False)   # enabled after init
+        self.mon_start_btn.clicked.connect(self._start_monitor)
+        self.mon_stop_btn = QPushButton("■  Stop")
+        self.mon_stop_btn.setMinimumHeight(40)
+        self.mon_stop_btn.setEnabled(False)
+        self.mon_stop_btn.clicked.connect(self._stop_monitor)
+        self.mon_clear_btn = QPushButton("Clear")
+        self.mon_clear_btn.setMaximumWidth(80)
+        self.mon_clear_btn.clicked.connect(self._clear_monitor)
+        ctrl.addWidget(self.mon_start_btn)
+        ctrl.addWidget(self.mon_stop_btn)
+        ctrl.addStretch()
+        ctrl.addWidget(self.mon_clear_btn)
+        lay.addLayout(ctrl)
+
+        # ── Info label
+        info = QLabel(
+            "Tune your radio to a busy frequency and press Start Monitor.\n"
+            "AutoQSO will transcribe audio and extract every callsign and signal report it hears — no transmitting."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#6c7086; font-size:10px;")
+        lay.addWidget(info)
+
+        # ── Heard table
+        self.mon_table = QTableWidget(0, 4)
+        self.mon_table.setHorizontalHeaderLabels(["UTC", "Callsigns", "RST", "Transcript"])
+        self.mon_table.horizontalHeader().setStretchLastSection(True)
+        self.mon_table.setColumnWidth(0, 65)
+        self.mon_table.setColumnWidth(1, 140)
+        self.mon_table.setColumnWidth(2, 50)
+        self.mon_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.mon_table.setAlternatingRowColors(True)
+        self.mon_table.setWordWrap(True)
+        lay.addWidget(self.mon_table, 1)
 
         return w
 
@@ -661,6 +711,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def _on_init_done(self):
         self.cq_btn.setEnabled(True)
+        self.mon_start_btn.setEnabled(True)
         self.status_bar.showMessage("Ready")
 
     # ──────────────────────────────────────────── rigctld control
@@ -879,6 +930,34 @@ class MainWindow(QMainWindow):
     def _on_error(self, msg: str):
         self.status_bar.showMessage(f"ERROR: {msg}")
         self.transcript.append(f'<span style="color:#f38ba8">[ERR] {msg}</span>')
+
+    # ──────────────────────────────────────────── monitor handlers
+    def _start_monitor(self):
+        self.mon_start_btn.setEnabled(False)
+        self.mon_stop_btn.setEnabled(True)
+        self.controller.start_monitor()
+
+    def _stop_monitor(self):
+        self.controller.stop()
+        self.mon_stop_btn.setEnabled(False)
+        self.mon_start_btn.setEnabled(True)
+
+    def _clear_monitor(self):
+        self.mon_table.setRowCount(0)
+
+    @pyqtSlot(str, str, str)
+    def _on_monitor_heard(self, calls: str, rst: str, transcript: str):
+        from datetime import datetime, timezone
+        utc = datetime.now(timezone.utc).strftime("%H:%Mz")
+        row = self.mon_table.rowCount()
+        self.mon_table.insertRow(row)
+        for col, val in enumerate([utc, calls, rst, transcript]):
+            item = QTableWidgetItem(val)
+            if col < 3:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.mon_table.setItem(row, col, item)
+        self.mon_table.resizeRowToContents(row)
+        self.mon_table.scrollToBottom()
 
     @pyqtSlot(bool)
     def _on_ptt_changed(self, active: bool):

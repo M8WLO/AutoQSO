@@ -19,7 +19,7 @@ from audio_engine import AudioRecorder, find_device_index, play_audio_file
 from stt_engine import STTEngine
 from tts_engine import TTSEngine
 from phonetics import (callsign_to_speech, speech_to_callsign,
-                       speech_to_rst, smeter_to_rst)
+                       speech_to_rst, smeter_to_rst, extract_all_callsigns)
 from qso_logger import QSOLogger, QSORecord
 
 log = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ class QSOController(QObject):
     log_line        = pyqtSignal(str)
     error_signal    = pyqtSignal(str)
     ptt_changed     = pyqtSignal(bool)   # True = PTT on (transmitting)
+    monitor_heard   = pyqtSignal(str, str, str)  # callsigns, rst, transcript
 
     def __init__(self, cfg: Config, parent=None):
         super().__init__(parent)
@@ -125,6 +126,38 @@ class QSOController(QObject):
     def stop(self):
         self._stop_event.set()
         self.status_message.emit("Stopping after current operation…")
+
+    def start_monitor(self):
+        """Passive listen mode — no TX, just extract callsigns/RSTs from audio."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._thread.start()
+
+    def _monitor_loop(self):
+        self._set_state(QSOState.LISTENING)
+        self.status_message.emit("Monitor mode: listening…")
+        while not self._stop_event.is_set():
+            audio = self._recorder.record_until_silence(
+                status_callback=lambda m: self.status_message.emit(m)
+            )
+            if self._stop_event.is_set():
+                break
+            if audio is None:
+                continue
+            self.status_message.emit("Transcribing…")
+            text = self._stt.transcribe(audio)
+            if not text:
+                self.status_message.emit("Monitor mode: listening…")
+                continue
+            self.log_line.emit(f"[MON] {text}")
+            calls = extract_all_callsigns(text)
+            rst   = speech_to_rst(text) or ""
+            calls_str = "  ".join(calls) if calls else ""
+            self.monitor_heard.emit(calls_str, rst, text)
+            self.status_message.emit("Monitor mode: listening…")
+        self._set_state(QSOState.IDLE)
 
     def manual_log(self, callsign: str, rst_sent: str, rst_rcvd: str):
         self._do_log(callsign, rst_sent, rst_rcvd)
