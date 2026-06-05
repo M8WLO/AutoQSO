@@ -52,6 +52,7 @@ class QSOController(QObject):
     qso_logged      = pyqtSignal(str, str, str)
     log_line        = pyqtSignal(str)
     error_signal    = pyqtSignal(str)
+    ptt_changed     = pyqtSignal(bool)   # True = PTT on (transmitting)
 
     def __init__(self, cfg: Config, parent=None):
         super().__init__(parent)
@@ -135,10 +136,11 @@ class QSOController(QObject):
         log.info("TX: %s", text)
         self.log_line.emit(f"[TX] {text}")
 
-        ptt_on = self.cfg.ptt_type == "CAT" and self._radio.connected
+        ptt_on = self.cfg.ptt_type != "NONE" and self._radio.connected
         if ptt_on:
             self._radio.set_ptt(True)
             time.sleep(self.cfg.ptt_pre_delay_ms / 1000)
+        self.ptt_changed.emit(True)
 
         path = self._tts.speak_to_file(text)
         if path:
@@ -150,6 +152,7 @@ class QSOController(QObject):
         else:
             self._tts.speak_blocking(text)
 
+        self.ptt_changed.emit(False)
         if ptt_on:
             time.sleep(self.cfg.ptt_tail_ms / 1000)
             self._radio.set_ptt(False)

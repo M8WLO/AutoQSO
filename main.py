@@ -16,12 +16,13 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QObject, QTimer
 from PyQt6.QtGui import QFont, QColor
 
 from config import Config
-from audio_engine import list_devices
+from audio_engine import list_devices, find_device_index
 from radio_interface import (
     RigctldManager, RadioInterface,
     HAMLIB_RIGS, find_rigctld, list_serial_ports,
 )
 from qso_controller import QSOController
+from audio_monitor import AudioLevelMonitor, LevelMeterWidget
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,18 +49,21 @@ class MainWindow(QMainWindow):
         self.rigctld_mgr = RigctldManager()
         self.controller  = QSOController(self.cfg)
 
+        # Audio level monitor (RX device → meter)
+        self._rx_monitor = AudioLevelMonitor()
         self._connect_signals()
         self._build_ui()
         self._apply_style()
         self.setWindowTitle("AutoQSO")
-        self.resize(960, 720)
+        self.resize(980, 740)
 
-        # Poll radio status every 2 s when radio tab is visible
+        # Poll radio status every 2 s
         self._radio_poll = QTimer(self)
         self._radio_poll.timeout.connect(self._poll_radio_status)
         self._radio_poll.start(2000)
 
         self._start_init()
+        self._start_rx_monitor()
 
         # Auto-start rigctld if configured
         if self.cfg.rigctld_autostart:
@@ -74,6 +78,13 @@ class MainWindow(QMainWindow):
         c.qso_logged.connect(self._on_qso_logged)
         c.log_line.connect(self._on_log_line)
         c.error_signal.connect(self._on_error)
+        c.ptt_changed.connect(self._on_ptt_changed)
+        self._rx_monitor.rx_level.connect(self._on_rx_level)
+
+    def _start_rx_monitor(self):
+        idx = find_device_index(self.cfg.rx_device_name, "input")
+        self._rx_monitor.set_device(idx)
+        self._rx_monitor.start()
 
     # ──────────────────────────────────────────── UI build
     def _build_ui(self):
@@ -100,7 +111,7 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(w)
         lay.setSpacing(8)
 
-        # ── Top row: state chip + current QSO info
+        # ── Top row: state chip + current QSO info + level meters
         top = QHBoxLayout()
 
         self.state_label = QLabel("IDLE")
@@ -119,6 +130,17 @@ class MainWindow(QMainWindow):
         qso_form.addRow("RST rcvd:",       self.rst_rcvd_label)
         qso_w = QWidget(); qso_w.setLayout(qso_form)
         top.addWidget(self._grp("Current QSO", qso_w), 1)
+
+        # Level meters — RX and TX side by side in a group
+        self._rx_meter = LevelMeterWidget("RX")
+        self._tx_meter = LevelMeterWidget("TX")
+        self._rx_meter.set_threshold(self.cfg.vad_threshold)
+        meters_row = QHBoxLayout()
+        meters_row.setSpacing(4)
+        meters_row.addWidget(self._rx_meter)
+        meters_row.addWidget(self._tx_meter)
+        meters_w = QWidget(); meters_w.setLayout(meters_row)
+        top.addWidget(self._grp("Levels", meters_w))
 
         lay.addLayout(top)
 
@@ -858,8 +880,21 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"ERROR: {msg}")
         self.transcript.append(f'<span style="color:#f38ba8">[ERR] {msg}</span>')
 
+    @pyqtSlot(bool)
+    def _on_ptt_changed(self, active: bool):
+        self._tx_meter.set_active(active)
+        if active:
+            self._tx_meter.set_level(0.75)
+        else:
+            self._tx_meter.reset()
+
+    @pyqtSlot(float)
+    def _on_rx_level(self, level: float):
+        self._rx_meter.set_level(level)
+
     def closeEvent(self, event):
         self.controller.stop()
+        self._rx_monitor.stop()
         self.rigctld_mgr.stop()
         event.accept()
 
